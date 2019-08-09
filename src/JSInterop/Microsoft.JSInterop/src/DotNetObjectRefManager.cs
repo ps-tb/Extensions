@@ -12,19 +12,6 @@ namespace Microsoft.JSInterop
         private long _nextId = 0; // 0 signals no object, but we increment prior to assignment. The first tracked object should have id 1
         private readonly ConcurrentDictionary<long, object> _trackedRefsById = new ConcurrentDictionary<long, object>();
 
-        public static DotNetObjectRefManager Current
-        {
-            get
-            {
-                if (!(JSRuntime.Current is JSRuntimeBase jsRuntimeBase))
-                {
-                    throw new InvalidOperationException("JSRuntime must be set up correctly and must be an instance of JSRuntimeBase to use DotNetObjectRef.");
-                }
-
-                return jsRuntimeBase.ObjectRefManager;
-            }
-        }
-
         public long TrackObject(object dotNetObjectRef)
         {
             var dotNetObjectId = Interlocked.Increment(ref _nextId);

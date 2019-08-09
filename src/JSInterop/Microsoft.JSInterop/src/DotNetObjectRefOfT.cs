@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Diagnostics;
 using System.Text.Json.Serialization;
 
 namespace Microsoft.JSInterop
@@ -19,11 +20,9 @@ namespace Microsoft.JSInterop
         /// <summary>
         /// Initializes a new instance of <see cref="DotNetObjectRef{TValue}" />.
         /// </summary>
-        /// <param name="objectId">The object Id.</param>
         /// <param name="value">The value to pass by reference.</param>
-        internal DotNetObjectRef(long objectId, TValue value)
+        internal DotNetObjectRef(TValue value)
         {
-            ObjectId = objectId;
             Value = value;
         }
 
@@ -32,8 +31,29 @@ namespace Microsoft.JSInterop
         /// </summary>
         public TValue Value { get; }
 
-        internal long ObjectId { get; }
+        internal JSRuntimeBase JSRuntime { get; private set; }
 
+        private long ObjectId { get; set; }
+
+        internal long TrackUsing(JSRuntimeBase jsRuntime)
+        {
+            if (JSRuntime != null)
+            {
+                if (!ReferenceEquals(JSRuntime, jsRuntime))
+                {
+                    throw new InvalidOperationException("DotnetObjectRef is already being tracked by a different JSRuntime instance.");
+                }
+
+                Debug.Assert(ObjectId != 0, "Object must already be tracked");
+                return ObjectId;
+            }
+
+            JSRuntime = jsRuntime;
+            ObjectId = jsRuntime.ObjectRefManager.TrackObject(Value);
+
+            return ObjectId;
+        }
+            
         /// <summary>
         /// Stops tracking this object reference, allowing it to be garbage collected
         /// (if there are no other references to it). Once the instance is disposed, it
@@ -41,7 +61,13 @@ namespace Microsoft.JSInterop
         /// </summary>
         public void Dispose()
         {
-            DotNetObjectRefManager.Current.ReleaseDotNetObject(ObjectId);
+            if (JSRuntime != null)
+            {
+                JSRuntime.ObjectRefManager.ReleaseDotNetObject(ObjectId);
+
+                JSRuntime = null;
+                ObjectId = 0;
+            }
         }
     }
 }

@@ -30,6 +30,22 @@ namespace Microsoft.JSInterop
         /// </summary>
         protected TimeSpan? DefaultAsyncTimeout { get; set; }
 
+        public JSRuntimeBase()
+        {
+            JsonSerializerOptions = new JsonSerializerOptions
+            {
+                MaxDepth = 32,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                PropertyNameCaseInsensitive = true,
+                Converters =
+                {
+                    new DotNetObjectReferenceJsonConverterFactory(this)
+                },
+            };
+        }
+
+        protected internal JsonSerializerOptions JsonSerializerOptions { get; }
+
         /// <summary>
         /// Invokes the specified JavaScript function asynchronously.
         /// </summary>
@@ -63,7 +79,7 @@ namespace Microsoft.JSInterop
                 }
 
                 var argsJson = args?.Any() == true ?
-                    JsonSerializer.Serialize(args, JsonSerializerOptionsProvider.Options) :
+                    JsonSerializer.Serialize(args, JsonSerializerOptions) :
                     null;
                 BeginInvokeJS(taskId, identifier, argsJson);
 
@@ -155,7 +171,7 @@ namespace Microsoft.JSInterop
                 {
                     var resultType = TaskGenericsUtil.GetTaskCompletionSourceResultType(tcs);
 
-                    var result = JsonSerializer.Deserialize(ref jsonReader, resultType, JsonSerializerOptionsProvider.Options);
+                    var result = JsonSerializer.Deserialize(ref jsonReader, resultType, JsonSerializerOptions);
                     TaskGenericsUtil.SetTaskCompletionSourceResult(tcs, result);
                 }
                 else

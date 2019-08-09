@@ -13,8 +13,10 @@ namespace Mono.WebAssembly.Interop
     /// Provides methods for invoking JavaScript functions for applications running
     /// on the Mono WebAssembly runtime.
     /// </summary>
-    public class MonoWebAssemblyJSRuntime : JSInProcessRuntimeBase
+    public sealed class MonoWebAssemblyJSRuntime : JSInProcessRuntimeBase
     {
+        public static MonoWebAssemblyJSRuntime Instance { get; } = new MonoWebAssemblyJSRuntime();
+
         /// <inheritdoc />
         protected override string InvokeJS(string identifier, string argsJson)
         {
@@ -33,11 +35,11 @@ namespace Mono.WebAssembly.Interop
 
         // Invoked via Mono's JS interop mechanism (invoke_method)
         private static string InvokeDotNet(string assemblyName, string methodIdentifier, string dotNetObjectId, string argsJson)
-            => DotNetDispatcher.Invoke(assemblyName, methodIdentifier, dotNetObjectId == null ? default : long.Parse(dotNetObjectId), argsJson);
+            => DotNetDispatcher.Invoke(Instance, assemblyName, methodIdentifier, dotNetObjectId == null ? default : long.Parse(dotNetObjectId), argsJson);
 
         // Invoked via Mono's JS interop mechanism (invoke_method)
         private static void EndInvokeJS(string argsJson)
-            => DotNetDispatcher.EndInvoke(argsJson);
+            => DotNetDispatcher.EndInvoke(Instance, argsJson);
 
         // Invoked via Mono's JS interop mechanism (invoke_method)
         private static void BeginInvokeDotNet(string callId, string assemblyNameOrDotNetObjectId, string methodIdentifier, string argsJson)
@@ -58,7 +60,7 @@ namespace Mono.WebAssembly.Interop
                 assemblyName = assemblyNameOrDotNetObjectId;
             }
 
-            DotNetDispatcher.BeginInvoke(callId, assemblyName, methodIdentifier, dotNetObjectId, argsJson);
+            DotNetDispatcher.BeginInvoke(Instance, callId, assemblyName, methodIdentifier, dotNetObjectId, argsJson);
         }
 
         protected override void EndInvokeDotNet(
@@ -83,7 +85,7 @@ namespace Mono.WebAssembly.Interop
 
             // We pass 0 as the async handle because we don't want the JS-side code to
             // send back any notification (we're just providing a result for an existing async call)
-            var args = JsonSerializer.Serialize(new[] { callId, success, resultOrError }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var args = JsonSerializer.Serialize(new[] { callId, success, resultOrError }, JsonSerializerOptions);
             BeginInvokeJS(0, "DotNet.jsCallDispatcher.endInvokeDotNetFromJS", args);
         }
 

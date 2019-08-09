@@ -9,7 +9,14 @@ namespace Microsoft.JSInterop
 {
     internal sealed class DotNetObjectReferenceJsonConverter<TValue> : JsonConverter<DotNetObjectRef<TValue>> where TValue : class
     {
+        public DotNetObjectReferenceJsonConverter(JSRuntimeBase jsRuntime)
+        {
+            JSRuntime = jsRuntime;
+        }
+
         private static JsonEncodedText DotNetObjectRefKey => DotNetDispatcher.DotNetObjectRefKey;
+
+        public JSRuntimeBase JSRuntime { get; }
 
         public override DotNetObjectRef<TValue> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
@@ -40,14 +47,16 @@ namespace Microsoft.JSInterop
                 throw new JsonException($"Required property {DotNetObjectRefKey} not found.");
             }
 
-            var value = (TValue)DotNetObjectRefManager.Current.FindDotNetObject(dotNetObjectId);
-            return new DotNetObjectRef<TValue>(dotNetObjectId, value);
+            var value = (TValue)JSRuntime.ObjectRefManager.FindDotNetObject(dotNetObjectId);
+            return new DotNetObjectRef<TValue>(value);
         }
 
         public override void Write(Utf8JsonWriter writer, DotNetObjectRef<TValue> value, JsonSerializerOptions options)
         {
+            var objectId = value.TrackUsing(JSRuntime);
+
             writer.WriteStartObject();
-            writer.WriteNumber(DotNetObjectRefKey, value.ObjectId);
+            writer.WriteNumber(DotNetObjectRefKey, objectId);
             writer.WriteEndObject();
         }
     }

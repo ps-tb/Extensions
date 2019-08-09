@@ -7,11 +7,11 @@ namespace Microsoft.JSInterop
 {
     internal static class JsonSerializerOptionsProvider
     {
-        public static readonly JsonSerializerOptions Options = new JsonSerializerOptions
-        {
-            MaxDepth = 32,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            PropertyNameCaseInsensitive = true,
-        };
+        //public static readonly JsonSerializerOptions Options = new JsonSerializerOptions
+        //{
+        //    MaxDepth = 32,
+        //    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        //    PropertyNameCaseInsensitive = true,
+        //};
     }
 }

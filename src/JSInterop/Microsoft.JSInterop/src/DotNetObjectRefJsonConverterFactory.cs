@@ -9,6 +9,13 @@ namespace Microsoft.JSInterop
 {
     internal sealed class DotNetObjectReferenceJsonConverterFactory : JsonConverterFactory
     {
+        public DotNetObjectReferenceJsonConverterFactory(JSRuntimeBase jsRuntime)
+        {
+            JSRuntime = jsRuntime;
+        }
+
+        public JSRuntimeBase JSRuntime { get; }
+
         public override bool CanConvert(Type typeToConvert)
         {
             return typeToConvert.IsGenericType && typeToConvert.GetGenericTypeDefinition() == typeof(DotNetObjectRef<>);
@@ -20,7 +27,7 @@ namespace Microsoft.JSInterop
             var instanceType = typeToConvert.GetGenericArguments()[0];
             var converterType = typeof(DotNetObjectReferenceJsonConverter<>).MakeGenericType(instanceType);
 
-            return (JsonConverter)Activator.CreateInstance(converterType);
+            return (JsonConverter)Activator.CreateInstance(converterType, JSRuntime);
         }
     }
 }

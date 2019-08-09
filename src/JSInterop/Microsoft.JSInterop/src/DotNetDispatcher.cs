@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.JSInterop
@@ -23,15 +24,32 @@ namespace Microsoft.JSInterop
         private static readonly ConcurrentDictionary<AssemblyKey, IReadOnlyDictionary<string, (MethodInfo, Type[])>> _cachedMethodsByAssembly
             = new ConcurrentDictionary<AssemblyKey, IReadOnlyDictionary<string, (MethodInfo, Type[])>>();
 
+        private static readonly AsyncLocal<JSRuntimeBase> _currentJSRuntime = new AsyncLocal<JSRuntimeBase>();
+
+        internal static JSRuntimeBase JSRuntime => _currentJSRuntime.Value;
+
+        /// <summary>
+        /// Sets the current JS runtime to the supplied instance.
+        ///
+        /// This is intended for framework use. Developers should not normally need to call this method.
+        /// </summary>
+        /// <param name="instance">The new current <see cref="IJSRuntime"/>.</param>
+        public static void SetCurrentJSRuntime(JSRuntimeBase instance)
+        {
+            _currentJSRuntime.Value = instance
+                ?? throw new ArgumentNullException(nameof(instance));
+        }
+
         /// <summary>
         /// Receives a call from JS to .NET, locating and invoking the specified method.
         /// </summary>
+        /// <param name="jsRuntime"></param>
         /// <param name="assemblyName">The assembly containing the method to be invoked.</param>
         /// <param name="methodIdentifier">The identifier of the method to be invoked. The method must be annotated with a <see cref="JSInvokableAttribute"/> matching this identifier string.</param>
         /// <param name="dotNetObjectId">For instance method calls, identifies the target object.</param>
         /// <param name="argsJson">A JSON representation of the parameters.</param>
         /// <returns>A JSON representation of the return value, or null.</returns>
-        public static string Invoke(string assemblyName, string methodIdentifier, long dotNetObjectId, string argsJson)
+        public static string Invoke(JSRuntimeBase jsRuntime, string assemblyName, string methodIdentifier, long dotNetObjectId, string argsJson)
         {
             // This method doesn't need [JSInvokable] because the platform is responsible for having
             // some way to dispatch calls here. The logic inside here is the thing that checks whether
@@ -41,40 +59,37 @@ namespace Microsoft.JSInterop
             var targetInstance = (object)null;
             if (dotNetObjectId != default)
             {
-                targetInstance = DotNetObjectRefManager.Current.FindDotNetObject(dotNetObjectId);
+                targetInstance = jsRuntime.ObjectRefManager.FindDotNetObject(dotNetObjectId);
             }
 
-            var syncResult = InvokeSynchronously(assemblyName, methodIdentifier, targetInstance, argsJson);
+            var syncResult = InvokeSynchronously(jsRuntime, assemblyName, methodIdentifier, targetInstance, argsJson);
             if (syncResult == null)
             {
                 return null;
             }
 
-            return JsonSerializer.Serialize(syncResult, JsonSerializerOptionsProvider.Options);
+            return JsonSerializer.Serialize(syncResult, jsRuntime.JsonSerializerOptions);
         }
 
         /// <summary>
         /// Receives a call from JS to .NET, locating and invoking the specified method asynchronously.
         /// </summary>
+        /// <param name="jsRuntime"></param>
         /// <param name="callId">A value identifying the asynchronous call that should be passed back with the result, or null if no result notification is required.</param>
         /// <param name="assemblyName">The assembly containing the method to be invoked.</param>
         /// <param name="methodIdentifier">The identifier of the method to be invoked. The method must be annotated with a <see cref="JSInvokableAttribute"/> matching this identifier string.</param>
         /// <param name="dotNetObjectId">For instance method calls, identifies the target object.</param>
         /// <param name="argsJson">A JSON representation of the parameters.</param>
         /// <returns>A JSON representation of the return value, or null.</returns>
-        public static void BeginInvoke(string callId, string assemblyName, string methodIdentifier, long dotNetObjectId, string argsJson)
+        public static void BeginInvoke(JSRuntimeBase jsRuntime, string callId, string assemblyName, string methodIdentifier, long dotNetObjectId, string argsJson)
         {
             // This method doesn't need [JSInvokable] because the platform is responsible for having
             // some way to dispatch calls here. The logic inside here is the thing that checks whether
             // the targeted method has [JSInvokable]. It is not itself subject to that restriction,
             // because there would be nobody to police that. This method *is* the police.
 
-            // DotNetDispatcher only works with JSRuntimeBase instances.
-            // If the developer wants to use a totally custom IJSRuntime, then their JS-side
-            // code has to implement its own way of returning async results.
-            var jsRuntimeBaseInstance = (JSRuntimeBase)JSRuntime.Current;
-
             // Using ExceptionDispatchInfo here throughout because we want to always preserve
+
             // original stack traces.
             object syncResult = null;
             ExceptionDispatchInfo syncException = null;
@@ -84,10 +99,10 @@ namespace Microsoft.JSInterop
             {
                 if (dotNetObjectId != default)
                 {
-                    targetInstance = DotNetObjectRefManager.Current.FindDotNetObject(dotNetObjectId);
+                    targetInstance = jsRuntime.ObjectRefManager.FindDotNetObject(dotNetObjectId);
                 }
 
-                syncResult = InvokeSynchronously(assemblyName, methodIdentifier, targetInstance, argsJson);
+                syncResult = InvokeSynchronously(jsRuntime, assemblyName, methodIdentifier, targetInstance, argsJson);
             }
             catch (Exception ex)
             {
@@ -102,7 +117,7 @@ namespace Microsoft.JSInterop
             else if (syncException != null)
             {
                 // Threw synchronously, let's respond.
-                jsRuntimeBaseInstance.EndInvokeDotNet(callId, false, syncException, assemblyName, methodIdentifier, dotNetObjectId);
+                jsRuntime.EndInvokeDotNet(callId, false, syncException, assemblyName, methodIdentifier, dotNetObjectId);
             }
             else if (syncResult is Task task)
             {
@@ -114,20 +129,20 @@ namespace Microsoft.JSInterop
                     {
                         var exception = t.Exception.GetBaseException();
 
-                        jsRuntimeBaseInstance.EndInvokeDotNet(callId, false, ExceptionDispatchInfo.Capture(exception), assemblyName, methodIdentifier, dotNetObjectId);
+                        jsRuntime.EndInvokeDotNet(callId, false, ExceptionDispatchInfo.Capture(exception), assemblyName, methodIdentifier, dotNetObjectId);
                     }
 
                     var result = TaskGenericsUtil.GetTaskResult(task);
-                    jsRuntimeBaseInstance.EndInvokeDotNet(callId, true, result, assemblyName, methodIdentifier, dotNetObjectId);
+                    jsRuntime.EndInvokeDotNet(callId, true, result, assemblyName, methodIdentifier, dotNetObjectId);
                 }, TaskScheduler.Current);
             }
             else
             {
-                jsRuntimeBaseInstance.EndInvokeDotNet(callId, true, syncResult, assemblyName, methodIdentifier, dotNetObjectId);
+                jsRuntime.EndInvokeDotNet(callId, true, syncResult, assemblyName, methodIdentifier, dotNetObjectId);
             }
         }
 
-        private static object InvokeSynchronously(string assemblyName, string methodIdentifier, object targetInstance, string argsJson)
+        private static object InvokeSynchronously(JSRuntimeBase jsRuntime, string assemblyName, string methodIdentifier, object targetInstance, string argsJson)
         {
             AssemblyKey assemblyKey;
             if (targetInstance != null)
@@ -146,7 +161,7 @@ namespace Microsoft.JSInterop
 
             var (methodInfo, parameterTypes) = GetCachedMethodInfo(assemblyKey, methodIdentifier);
 
-            var suppliedArgs = ParseArguments(methodIdentifier, argsJson, parameterTypes);
+            var suppliedArgs = ParseArguments(jsRuntime.JsonSerializerOptions, methodIdentifier, argsJson, parameterTypes);
 
             try
             {
@@ -164,7 +179,7 @@ namespace Microsoft.JSInterop
             }
         }
 
-        internal static object[] ParseArguments(string methodIdentifier, string arguments, Type[] parameterTypes)
+        internal static object[] ParseArguments(JsonSerializerOptions jsonSerializerOptions, string methodIdentifier, string arguments, Type[] parameterTypes)
         {
             if (parameterTypes.Length == 0)
             {
@@ -189,7 +204,7 @@ namespace Microsoft.JSInterop
                     throw new InvalidOperationException($"In call to '{methodIdentifier}', parameter of type '{parameterType.Name}' at index {(index + 1)} must be declared as type 'DotNetObjectRef<{parameterType.Name}>' to receive the incoming value.");
                 }
 
-                suppliedArgs[index] = JsonSerializer.Deserialize(ref reader, parameterType, JsonSerializerOptionsProvider.Options);
+                suppliedArgs[index] = JsonSerializer.Deserialize(ref reader, parameterType, jsonSerializerOptions);
                 index++;
             }
 
@@ -238,18 +253,18 @@ namespace Microsoft.JSInterop
         /// method is responsible for handling any possible exception generated from the arguments
         /// passed in as parameters.
         /// </remarks>
+        /// <param name="jsRuntime"></param>
         /// <param name="arguments">The serialized arguments for the callback completion.</param>
         /// <exception cref="Exception">
         /// This method can throw any exception either from the argument received or as a result
         /// of executing any callback synchronously upon completion.
         /// </exception>
-        public static void EndInvoke(string arguments)
+        public static void EndInvoke(JSRuntimeBase jsRuntime, string arguments)
         {
-            var jsRuntimeBase = (JSRuntimeBase)JSRuntime.Current;
-            ParseEndInvokeArguments(jsRuntimeBase, arguments);
+            ParseEndInvokeArguments(jsRuntime, arguments);
         }
 
-        internal static void ParseEndInvokeArguments(JSRuntimeBase jsRuntimeBase, string arguments)
+        internal static void ParseEndInvokeArguments(JSRuntimeBase jsRuntime, string arguments)
         {
             var utf8JsonBytes = Encoding.UTF8.GetBytes(arguments);
 
@@ -272,7 +287,7 @@ namespace Microsoft.JSInterop
             var success = reader.GetBoolean();
 
             reader.Read();
-            jsRuntimeBase.EndInvokeJS(taskId, success, ref reader);
+            jsRuntime.EndInvokeJS(taskId, success, ref reader);
 
             if (!reader.Read() || reader.TokenType != JsonTokenType.EndArray)
             {
@@ -293,7 +308,7 @@ namespace Microsoft.JSInterop
         [JSInvokable(nameof(DotNetDispatcher) + "." + nameof(ReleaseDotNetObject))]
         public static void ReleaseDotNetObject(long dotNetObjectId)
         {
-            DotNetObjectRefManager.Current.ReleaseDotNetObject(dotNetObjectId);
+            JSRuntime.ObjectRefManager.ReleaseDotNetObject(dotNetObjectId);
         }
 
         private static (MethodInfo, Type[]) GetCachedMethodInfo(AssemblyKey assemblyKey, string methodIdentifier)
